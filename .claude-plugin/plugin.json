@@ -5,6 +5,5 @@
   "author": {
     "name": "Loris"
   },
-  "repository": "https://github.com/TakazenS/claude-auto-model",
-  "types": "./types/index.d.ts"
+  "repository": "https://github.com/TakazenS/claude-auto-model"
 }
