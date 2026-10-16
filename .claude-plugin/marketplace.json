@@ -1,0 +1,11 @@
+{
+  "name": "claude-auto-model",
+  "owner": { "name": "Loris" },
+  "plugins": [
+    {
+      "name": "auto-modele",
+      "source": "./",
+      "description": "Choisit automatiquement le modèle et l'effort selon la tâche, et affiche la consommation (session et semaine) en jauges circulaires."
+    }
+  ]
+}
