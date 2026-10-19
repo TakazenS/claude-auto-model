@@ -20,12 +20,16 @@ export type Decision = {
 
 export type Fenetre = { kind: string; percentUsed: number; resetsAt?: string }
 
+export type Contexte = { tokens?: number; window: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'auto-modele': {
       decision: Decision | null
       fenetres: Fenetre[]
       actif: boolean
+      contexte: Contexte | null
+      cout: number | null
     }
   }
 }

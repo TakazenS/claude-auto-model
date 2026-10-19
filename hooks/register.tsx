@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Categorie, Decision, Effort, Fenetre } from '../types'
+import type { Categorie, Contexte, Decision, Effort, Fenetre } from '../types'
 
 // ─── Réglages ────────────────────────────────────────────────────────────────
 
@@ -66,10 +66,11 @@ Si le message est une simple suite de la conversation (« oui », « continue »
 
 // ─── État ────────────────────────────────────────────────────────────────────
 
-const PANE = 'auto-modele-conso'
 const decision = atom({ plugin: 'auto-modele', key: 'decision' } as const, null)
 const fenetres = atom({ plugin: 'auto-modele', key: 'fenetres' } as const, [])
 const actif = atom({ plugin: 'auto-modele', key: 'actif' } as const, true)
+const contexte = atom({ plugin: 'auto-modele', key: 'contexte' } as const, null)
+const cout = atom({ plugin: 'auto-modele', key: 'cout' } as const, null)
 
 // ─── Classement ──────────────────────────────────────────────────────────────
 
@@ -128,46 +129,151 @@ function resumer(d: Decision): string {
   return `🧭 ${LIBELLES[d.categorie]} → ${d.nomModele} · ${NOMS_EFFORT[d.effort]}`
 }
 
-// ─── Jauges ──────────────────────────────────────────────────────────────────
+// ─── Barre de consommation ───────────────────────────────────────────────────
 
-function couleur(pct: number | undefined): string {
-  if (pct === undefined) return '#9a9a9a'
-  if (pct < 50) return '#2f9e6b'
-  if (pct < 80) return '#e0a100'
-  return '#d9534f'
+const H = 24 // hauteur de la barre, en px
+const POLICE = 'system-ui, -apple-system, Segoe UI, sans-serif'
+const DUREES: Record<string, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 24 * 3600_000 }
+
+function teinte(pct: number): string {
+  if (pct < 50) return '#3fb950'
+  if (pct < 80) return '#d29922'
+  return '#f85149'
 }
 
-function anneau(pct: number | undefined): string {
-  const r = 52
-  const c = 2 * Math.PI * r
-  const p = Math.max(0, Math.min(100, pct ?? 0))
-  const plein = ((c * p) / 100).toFixed(2)
-  const teinte = couleur(pct)
-  const texte = pct === undefined ? '—' : `${Math.round(p)}%`
-  const arc =
-    p > 0
-      ? `<circle cx="70" cy="70" r="${r}" fill="none" stroke="${teinte}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${plein} ${c.toFixed(2)}" transform="rotate(-90 70 70)"><animate attributeName="stroke-dasharray" from="0 ${c.toFixed(2)}" to="${plein} ${c.toFixed(2)}" dur="0.9s" fill="freeze"/></circle>`
-      : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 140 140"><circle cx="70" cy="70" r="${r}" fill="none" stroke="#8a8a8a" stroke-opacity="0.25" stroke-width="12"/>${arc}<text x="70" y="70" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="26" font-weight="600" fill="${teinte}">${texte}</text></svg>`
+function echapper(t: string): string {
+  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function barre(pct: number | undefined): string {
-  if (pct === undefined) return '░░░░░░░░░░░░░░░░░░░░  —'
-  const n = Math.round(Math.max(0, Math.min(100, pct)) / 5)
-  return `${'█'.repeat(n)}${'░'.repeat(20 - n)}  ${Math.round(pct)}%`
+/** Largeur approximative d'un texte en px (police système 11 px). */
+function largeur(t: string, gras = false): number {
+  return Math.ceil(t.length * (gras ? 6.6 : 6.0))
 }
 
-function reinitialisation(iso?: string): string {
-  if (!iso) return ''
-  try {
-    const date = new Date(iso)
-    const jour = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'][date.getDay()]
-    const hh = String(date.getHours()).padStart(2, '0')
-    const mm = String(date.getMinutes()).padStart(2, '0')
-    return `Réinitialisation : ${jour} ${hh}:${mm}`
-  } catch {
-    return ''
+function kilo(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+}
+
+function restant(ms: number): string {
+  if (ms <= 0) return '0m'
+  const h = ms / 3600_000
+  if (h >= 24) return `${Math.floor(h / 24)}d`
+  if (h >= 1) return `${Math.floor(h)}h`
+  return `${Math.max(1, Math.floor(ms / 60_000))}m`
+}
+
+/** Avance (+) ou retard (−) sur le rythme : temps écoulé de la fenêtre moins part consommée. */
+function rythme(f: Fenetre, maintenant: number): { ecart: number; reste: number } | undefined {
+  const duree = DUREES[f.kind]
+  if (duree === undefined || !f.resetsAt) return undefined
+  const fin = Date.parse(f.resetsAt)
+  if (Number.isNaN(fin)) return undefined
+  const reste = Math.max(0, fin - maintenant)
+  const ecoule = Math.min(100, Math.max(0, (1 - reste / duree) * 100))
+  return { ecart: ecoule - f.percentUsed, reste }
+}
+
+type Mesures = {
+  contexte: Contexte | null
+  cout: number | null
+  fenetres: Fenetre[]
+  maintenant: number
+}
+
+function barreSvg(m: Mesures): string {
+  const morceaux: string[] = []
+  const GAP = 6
+  const PAD = 10
+  let x = 0
+
+  const capsule = (contenu: (x0: number) => { svg: string; w: number }) => {
+    const { svg, w } = contenu(x + PAD)
+    const total = w + PAD * 2
+    morceaux.push(`<rect class="cap" x="${x + 0.5}" y="0.5" width="${total - 1}" height="${H - 1}" rx="7"/>${svg}`)
+    x += total + GAP
   }
+  const texte = (tx: number, t: string, classe: string, couleur?: string) =>
+    `<text x="${tx}" y="${H / 2}" class="${classe}"${couleur ? ` fill="${couleur}"` : ''}>${echapper(t)}</text>`
+
+  // Contexte : S [128k/200k]
+  capsule(x0 => {
+    const c = m.contexte
+    const libelle = c && c.tokens !== undefined ? `${kilo(c.tokens)}/${kilo(c.window)}` : '—'
+    const part = c && c.tokens !== undefined && c.window > 0 ? Math.min(1, c.tokens / c.window) : 0
+    const wS = largeur('S')
+    const wPill = Math.max(64, largeur(libelle, true) + 18)
+    const px = x0 + wS + 8
+    const svg =
+      texte(x0, 'S', 'dim') +
+      `<rect class="pill" x="${px}" y="${(H - 16) / 2}" width="${wPill}" height="16" rx="8"/>` +
+      (part > 0 ? `<rect x="${px}" y="${(H - 16) / 2}" width="${Math.max(16, wPill * part).toFixed(1)}" height="16" rx="8" fill="#2f6feb"/>` : '') +
+      `<text x="${px + wPill / 2}" y="${H / 2}" class="pilltxt" text-anchor="middle">${echapper(libelle)}</text>`
+    return { svg, w: wS + 8 + wPill }
+  })
+
+  // Fenêtres : 5h puis Week
+  for (const [kind, nom] of [['five_hour', '5h'], ['seven_day', 'Week']] as const) {
+    capsule(x0 => {
+      const f = m.fenetres.find(one => one.kind === kind)
+      const parts: string[] = []
+      let cx = x0
+      parts.push(texte(cx, nom, 'dim'))
+      cx += largeur(nom) + 8
+      const BW = 34
+      parts.push(`<rect class="piste" x="${cx}" y="${H / 2 - 1.5}" width="${BW}" height="3" rx="1.5"/>`)
+      if (f && f.percentUsed > 0) {
+        const w = Math.max(3, (BW * Math.min(100, f.percentUsed)) / 100)
+        parts.push(`<rect x="${cx}" y="${H / 2 - 1.5}" width="${w.toFixed(1)}" height="3" rx="1.5" fill="${teinte(f.percentUsed)}"/>`)
+      }
+      cx += BW + 8
+      const pct = f ? `${Math.round(f.percentUsed)}%` : '—'
+      parts.push(texte(cx, pct, 'fort'))
+      cx += largeur(pct, true) + 7
+      const r = f ? rythme(f, m.maintenant) : undefined
+      if (r) {
+        const ecart = `${r.ecart >= 0 ? '+' : '−'}${Math.abs(r.ecart).toFixed(1)}%`
+        parts.push(texte(cx, ecart, 'moyen', r.ecart >= 0 ? '#3fb950' : '#f85149'))
+        cx += largeur(ecart) + 7
+        const t = restant(r.reste)
+        parts.push(texte(cx, t, 'dim'))
+        cx += largeur(t)
+      } else {
+        cx -= 7
+      }
+      return { svg: parts.join(''), w: cx - x0 }
+    })
+  }
+
+  // Coût de la session
+  capsule(x0 => {
+    const libelle = m.cout === null ? '$—' : `$${m.cout.toFixed(2)}`
+    return { svg: texte(x0, libelle, 'fort'), w: largeur(libelle, true) }
+  })
+
+  const W = Math.ceil(x - GAP)
+  const style =
+    `text{font-family:${POLICE};font-size:11px;dominant-baseline:central}` +
+    `.cap{fill:#1c1c1e;stroke:#ffffff;stroke-opacity:.08}` +
+    `.pill{fill:#2c2c30}.piste{fill:#ffffff;fill-opacity:.14}` +
+    `.dim{fill:#8e8e93}.fort{fill:#f2f2f7;font-weight:600}.moyen{font-weight:500}.pilltxt{fill:#fff;font-weight:600}` +
+    `@media (prefers-color-scheme: light){.cap{fill:#f4f4f5;stroke:#000;stroke-opacity:.08}` +
+    `.pill{fill:#a1a1aa}.piste{fill:#000;fill-opacity:.12}.dim{fill:#6b6b70}.fort{fill:#18181b}}`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><style>${style}</style>${morceaux.join('')}</svg>`
+}
+
+function barreTexte(m: Mesures): string {
+  const c = m.contexte
+  const ctx = c && c.tokens !== undefined ? `${kilo(c.tokens)}/${kilo(c.window)}` : '—'
+  const seg = (kind: string, nom: string) => {
+    const f = m.fenetres.find(one => one.kind === kind)
+    if (!f) return `${nom} —`
+    const n = Math.round(Math.min(100, f.percentUsed) / 20)
+    const r = rythme(f, m.maintenant)
+    const suite = r ? ` ${r.ecart >= 0 ? '+' : '−'}${Math.abs(r.ecart).toFixed(1)}% ${restant(r.reste)}` : ''
+    return `${nom} ${'▰'.repeat(n)}${'▱'.repeat(5 - n)} ${Math.round(f.percentUsed)}%${suite}`
+  }
+  const cout = m.cout === null ? '$—' : `$${m.cout.toFixed(2)}`
+  return `S ${ctx}  │  ${seg('five_hour', '5h')}  │  ${seg('seven_day', 'Week')}  │  ${cout}`
 }
 
 function versFenetres(limites: readonly Fenetre[]): Fenetre[] {
@@ -182,10 +288,6 @@ export const register: Register = on => {
     if (sauvegarde === false) await update($, actif, () => false)
 
     await $.command.register({
-      name: 'conso',
-      description: 'Affiche la consommation de tokens (session et semaine) en jauges',
-    })
-    await $.command.register({
       name: 'auto-modele',
       description: 'Routage automatique du modèle : on, off, ou état',
       argumentHint: '[on|off]',
@@ -194,17 +296,16 @@ export const register: Register = on => {
     try {
       const usage = await $.session.usage()
       await update($, fenetres, () => versFenetres(usage.rateLimits))
+      await update($, contexte, () => ({ tokens: usage.context.tokens, window: usage.context.window }))
+      const usd = usage.cost?.usd
+      if (usd !== undefined) await update($, cout, () => usd)
     } catch {
       // pas encore de mesure
     }
 
-    void $.ui.open({ id: PANE, title: 'Consommation' })
+    // Rafraîchir les temps restants de la barre chaque minute.
+    $.clock.every(60_000, () => $.ui.invalidate('ui.render'))
     return next(e)
-  })
-
-  on('command.run', { command: 'conso' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'Consommation' })
-    return { text: 'Jauges de consommation ouvertes.' }
   })
 
   on('command.run', { command: 'auto-modele' }, async ($, e) => {
@@ -253,80 +354,53 @@ export const register: Register = on => {
     return yield* next({ ...e, model: d.modele, effort: d.effort })
   })
 
-  // 3. Mettre à jour les jauges quand les limites bougent.
+  // 3. Mettre à jour la barre quand le contexte, les limites ou le coût bougent.
   on('session.measure', async ($, e, next) => {
-    if (e.changed.includes('rateLimits')) {
-      await update($, fenetres, () => versFenetres(e.rateLimits))
+    if (e.changed.includes('rateLimits')) await update($, fenetres, () => versFenetres(e.rateLimits))
+    if (e.changed.includes('context')) await update($, contexte, () => ({ tokens: e.context.tokens, window: e.context.window }))
+    if (e.changed.includes('cost') && e.cost) {
+      const usd = e.cost.usd
+      await update($, cout, () => usd)
     }
     return next(e)
   })
 
-  // 4. Le panneau : deux anneaux (session 5 h, semaine).
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const liste = await read($, fenetres)
-    const session = liste.find(f => f.kind === 'five_hour')
-    const semaine = liste.find(f => f.kind === 'seven_day')
-    const d = await read($, decision)
+  // 4. La barre au-dessus du champ de saisie.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+
+    const m: Mesures = {
+      contexte: await read($, contexte),
+      cout: await read($, cout),
+      fenetres: await read($, fenetres),
+      maintenant: await $.clock.now(),
+    }
     const estActif = await read($, actif)
-    const routage = !estActif ? 'Routage : désactivé' : d ? `Routage : ${resumer(d).replace('🧭 ', '')}` : 'Routage : en attente de la première demande'
-    const vide = liste.length === 0
+    const basculer = async () => {
+      await update($, actif, v => !v)
+      const valeur = await read($, actif)
+      await $.store.set('actif', valeur)
+      if (!valeur) $.ui.status(undefined)
+      $.ui.toast(valeur ? 'Routage automatique réactivé' : 'Routage automatique en pause')
+    }
 
     if (e.surface === 'terminal') {
-      const { Box, Text } = $.ui.resolve(e)
+      const { Box, Text, Button } = $.ui.resolve(e)
       return (
-        <Box flexDirection="column">
-          <Text bold>Session (5 h)</Text>
-          <Text>{barre(session?.percentUsed)}</Text>
-          <Text dimColor>{reinitialisation(session?.resetsAt)}</Text>
-          <Text bold>Semaine</Text>
-          <Text>{barre(semaine?.percentUsed)}</Text>
-          <Text dimColor>{reinitialisation(semaine?.resetsAt)}</Text>
-          {vide && <Text dimColor>Les jauges se remplissent après la première réponse.</Text>}
-          <Text dimColor>{routage}</Text>
+        <Box flexDirection="row">
+          <Text dimColor>{barreTexte(m)}  </Text>
+          <Button key="routage" plain label={estActif ? '⚙' : '⚙ (pause)'} onPress={basculer} />
         </Box>
       )
     }
 
-    const { Box, Text, Svg, Button } = $.ui.resolve(e)
+    const { Box, Svg, Button } = $.ui.resolve(e)
     return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" gap={2}>
-          <Box flexDirection="column" alignItems="center">
-            <Svg
-              source={anneau(session?.percentUsed)}
-              alt={`Session : ${session ? Math.round(session.percentUsed) : '—'} %`}
-              width={140}
-              height={140}
-              isInteractive
-            />
-            <Text bold>Session (5 h)</Text>
-            <Text dimColor>{reinitialisation(session?.resetsAt)}</Text>
-          </Box>
-          <Box flexDirection="column" alignItems="center">
-            <Svg
-              source={anneau(semaine?.percentUsed)}
-              alt={`Semaine : ${semaine ? Math.round(semaine.percentUsed) : '—'} %`}
-              width={140}
-              height={140}
-              isInteractive
-            />
-            <Text bold>Semaine</Text>
-            <Text dimColor>{reinitialisation(semaine?.resetsAt)}</Text>
-          </Box>
-        </Box>
-        {vide && <Text dimColor>Les jauges se remplissent après la première réponse (abonnement Claude).</Text>}
-        <Text dimColor>{routage}</Text>
-        <Button
-          key="bascule"
-          label={estActif ? 'Mettre le routage en pause' : 'Réactiver le routage'}
-          onPress={async () => {
-            await update($, actif, v => !v)
-            const valeur = await read($, actif)
-            await $.store.set('actif', valeur)
-            if (!valeur) $.ui.status(undefined)
-          }}
-        />
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        <Svg source={barreSvg(m)} alt={barreTexte(m)} />
+        <Button key="routage" plain label={estActif ? '⚙' : '⚙ ⏸'} onPress={basculer} />
       </Box>
     )
   })
+
 }

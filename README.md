@@ -1,6 +1,6 @@
 # auto-modele
 
-Mod pour Claude Code qui **choisit automatiquement le modèle et l'effort** selon la demande, et affiche la **consommation** (session de 5 h et semaine) sous forme de jauges circulaires.
+Mod pour Claude Code qui **choisit automatiquement le modèle et l'effort** selon la demande, et affiche la **consommation** (contexte, session de 5 h, semaine et coût) dans une barre compacte au-dessus du champ de saisie.
 
 ## Fonctionnement
 
@@ -24,20 +24,29 @@ Mod pour Claude Code qui **choisit automatiquement le modèle et l'effort** selo
 - Les sous-agents ne sont pas routés.
 - Le choix courant s'affiche dans la ligne d'état, par exemple `🧭 Code → Opus 5.5 · Élevé`.
 
-## Panneau « Consommation »
+## Barre de consommation
 
-Le panneau s'ouvre au démarrage de la session :
+Une barre s'affiche au-dessus du champ de saisie, de gauche à droite :
 
-- **desktop** : deux anneaux animés (session 5 h et semaine), vert / orange / rouge selon le pourcentage, avec l'heure de réinitialisation et un bouton pour mettre le routage en pause ;
-- **terminal** : les mêmes informations en barres de progression.
+| Segment | Contenu |
+| --- | --- |
+| `S` | Contexte utilisé / taille de la fenêtre (ex. `128k/200k`) |
+| `5h` | Limite de la session de 5 h : jauge, pourcentage, avance sur le rythme, temps avant réinitialisation |
+| `Week` | Limite hebdomadaire, mêmes informations |
+| `$` | Coût de la session |
+| ⚙ | Met le routage automatique en pause ou le réactive |
 
-Les jauges se remplissent après la première réponse (abonnement Claude requis pour les limites d'usage).
+L'avance sur le rythme (`+32.3%`) est le temps écoulé de la fenêtre moins la part consommée : en vert si tu consommes moins vite que le rythme, en rouge sinon. La jauge passe du vert à l'orange (50 %) puis au rouge (80 %).
+
+- **desktop** : la barre est dessinée en SVG et suit le thème clair ou sombre ;
+- **terminal** : les mêmes informations sur une ligne de texte.
+
+Les limites apparaissent après la première réponse (abonnement Claude requis pour les limites d'usage).
 
 ## Commandes
 
 | Commande | Effet |
 | --- | --- |
-| `/conso` | Ouvre le panneau des jauges |
 | `/auto-modele` | Affiche l'état du routage et le dernier choix |
 | `/auto-modele on` | Active le routage automatique |
 | `/auto-modele off` | Désactive le routage automatique |
@@ -84,11 +93,11 @@ claude plugin test .
   marketplace.json   fait de ce dépôt une marketplace
 hooks/
   hooks.json         point d'entrée des hooks
-  register.tsx       routage, commandes et panneau
+  register.tsx       routage, commandes et barre de consommation
 types/
   index.d.ts         contrat d'état ($.state)
 tests/
-  routage.test.ts    tests du routage et du panneau
+  routage.test.ts    tests du routage et de la barre
 ```
 
 Les réglages (modèles, efforts par catégorie, consigne du classeur) sont en tête de `hooks/register.tsx`.

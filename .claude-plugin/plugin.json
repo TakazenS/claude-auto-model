@@ -1,7 +1,7 @@
 {
   "name": "auto-modele",
   "version": "0.1.0",
-  "description": "Choisit automatiquement le modèle et l'effort selon la tâche, et affiche la consommation (session et semaine) en jauges circulaires.",
+  "description": "Choisit automatiquement le modèle et l'effort selon la tâche, et affiche la consommation (contexte, 5 h, semaine, coût) dans une barre au-dessus du champ de saisie.",
   "author": {
     "name": "Loris"
   },

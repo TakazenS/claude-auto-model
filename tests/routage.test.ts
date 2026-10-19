@@ -72,17 +72,30 @@ test('réponse illisible du classeur → heuristique', async ($, on) => {
   expect(vu?.model).toBe('claude-haiku-5-5')
 })
 
-test('le panneau dessine deux anneaux sur desktop et du texte sur terminal', async ($, on) => {
-  void on
+test('la barre affiche contexte, 5h, Week puis le coût, sur desktop et terminal', async ($, on) => {
+  const MAINTENANT = Date.parse('2026-10-19T16:00:00Z')
+  on('clock.now', () => ({ value: MAINTENANT }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  await $.session.measure({
+    context: { tokens: 128_000, window: 200_000 },
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 14, resetsAt: '2026-10-19T18:41:00Z' },
+      { kind: 'seven_day', percentUsed: 90, resetsAt: '2026-10-19T22:30:00Z' },
+    ],
+    cost: { usd: 8.31 },
+    changed: ['context', 'rateLimits', 'cost'],
+  })
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({
       plugin: 'auto-modele',
       surface,
-      component: 'Pane',
-      requestId: 'auto-modele-conso',
-      props: { title: 'Consommation', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
     })
-    expect(await ui.find({ text: /Semaine/ })).toBeDefined()
+    expect(await ui.find({ key: 'routage' })).toBeDefined()
+    if (surface === 'terminal') {
+      expect(await ui.find({ text: /S 128k\/200k .*5h .*14% \+32\.3% 2h .*Week .*90% \+6\.1% 6h .*\$8\.31/ })).toBeDefined()
+    }
     await ui.unmount()
   }
 })
