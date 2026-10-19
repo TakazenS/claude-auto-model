@@ -30,6 +30,7 @@ declare module 'claude-code' {
       actif: boolean
       contexte: Contexte | null
       cout: number | null
+      masquee: boolean
     }
   }
 }

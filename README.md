@@ -35,6 +35,7 @@ Une barre s'affiche au-dessus du champ de saisie, de gauche à droite :
 | `Week` | Limite hebdomadaire, mêmes informations |
 | `$` | Coût de la session |
 | ⚙ | Met le routage automatique en pause ou le réactive |
+| × | Masque la barre (`/conso` pour la réafficher) |
 
 L'avance sur le rythme (`+32.3%`) est le temps écoulé de la fenêtre moins la part consommée : en vert si tu consommes moins vite que le rythme, en rouge sinon. La jauge passe du vert à l'orange (50 %) puis au rouge (80 %).
 
@@ -47,11 +48,13 @@ Les limites apparaissent après la première réponse (abonnement Claude requis 
 
 | Commande | Effet |
 | --- | --- |
+| `/conso` | Affiche ou masque la barre de consommation |
+| `/conso on` / `/conso off` | Affiche / masque la barre |
 | `/auto-modele` | Affiche l'état du routage et le dernier choix |
 | `/auto-modele on` | Active le routage automatique |
 | `/auto-modele off` | Désactive le routage automatique |
 
-L'état activé / désactivé est conservé d'une session à l'autre.
+L'état du routage et l'affichage de la barre sont conservés d'une session à l'autre.
 
 ## Installation
 

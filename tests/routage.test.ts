@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import type { TurnStepInput } from 'claude-code'
+import type { RenderElement, TurnStepInput } from 'claude-code'
 
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const ORIGINE = { kind: 'composer' } as const
@@ -98,4 +98,19 @@ test('la barre affiche contexte, 5h, Week puis le coût, sur desktop et terminal
     }
     await ui.unmount()
   }
+})
+
+test('la barre se masque avec ×, puis revient avec /conso', async ($, on) => {
+  on('clock.now', () => ({ value: Date.parse('2026-10-19T16:00:00Z') }))
+  on('ui.toast', () => ({ value: undefined }))
+  mock.store(on)
+  // Sous le mod, l'engine dessine une bande vide.
+  on('ui.render', { component: 'AbovePrompt' }, ($$, e) => h($$.ui.resolve(e).Box, {}) as RenderElement)
+  const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+  const ui = await $.ui.mount({ plugin: 'auto-modele', surface: 'desktop', component: 'AbovePrompt', props })
+  await ui.press({ key: 'masquer' })
+  expect(await ui.find({ key: 'masquer' })).toBeUndefined()
+  await $.command.run({ command: 'conso', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  expect(await ui.find({ key: 'masquer' })).toBeDefined()
+  await ui.unmount()
 })

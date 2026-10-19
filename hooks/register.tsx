@@ -71,6 +71,7 @@ const fenetres = atom({ plugin: 'auto-modele', key: 'fenetres' } as const, [])
 const actif = atom({ plugin: 'auto-modele', key: 'actif' } as const, true)
 const contexte = atom({ plugin: 'auto-modele', key: 'contexte' } as const, null)
 const cout = atom({ plugin: 'auto-modele', key: 'cout' } as const, null)
+const masquee = atom({ plugin: 'auto-modele', key: 'masquee' } as const, false)
 
 // ─── Classement ──────────────────────────────────────────────────────────────
 
@@ -286,7 +287,13 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const sauvegarde = await $.store.get('actif')
     if (sauvegarde === false) await update($, actif, () => false)
+    if ((await $.store.get('masquee')) === true) await update($, masquee, () => true)
 
+    await $.command.register({
+      name: 'conso',
+      description: 'Affiche ou masque la barre de consommation : on, off, ou bascule',
+      argumentHint: '[on|off]',
+    })
     await $.command.register({
       name: 'auto-modele',
       description: 'Routage automatique du modèle : on, off, ou état',
@@ -306,6 +313,14 @@ export const register: Register = on => {
     // Rafraîchir les temps restants de la barre chaque minute.
     $.clock.every(60_000, () => $.ui.invalidate('ui.render'))
     return next(e)
+  })
+
+  on('command.run', { command: 'conso' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    await update($, masquee, v => (arg === 'on' ? false : arg === 'off' ? true : !v))
+    const valeur = await read($, masquee)
+    await $.store.set('masquee', valeur)
+    return { text: valeur ? 'Barre de consommation masquée (/conso pour la réafficher).' : 'Barre de consommation affichée.' }
   })
 
   on('command.run', { command: 'auto-modele' }, async ($, e) => {
@@ -367,7 +382,7 @@ export const register: Register = on => {
 
   // 4. La barre au-dessus du champ de saisie.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || (await read($, masquee))) return next(e)
 
     const m: Mesures = {
       contexte: await read($, contexte),
@@ -383,6 +398,11 @@ export const register: Register = on => {
       if (!valeur) $.ui.status(undefined)
       $.ui.toast(valeur ? 'Routage automatique réactivé' : 'Routage automatique en pause')
     }
+    const masquer = async () => {
+      await update($, masquee, () => true)
+      await $.store.set('masquee', true)
+      $.ui.toast('Barre masquée : /conso pour la réafficher')
+    }
 
     if (e.surface === 'terminal') {
       const { Box, Text, Button } = $.ui.resolve(e)
@@ -390,6 +410,8 @@ export const register: Register = on => {
         <Box flexDirection="row">
           <Text dimColor>{barreTexte(m)}  </Text>
           <Button key="routage" plain label={estActif ? '⚙' : '⚙ (pause)'} onPress={basculer} />
+          <Text> </Text>
+          <Button key="masquer" plain label="×" onPress={masquer} />
         </Box>
       )
     }
@@ -399,6 +421,7 @@ export const register: Register = on => {
       <Box flexDirection="row" alignItems="center" gap={1}>
         <Svg source={barreSvg(m)} alt={barreTexte(m)} />
         <Button key="routage" plain label={estActif ? '⚙' : '⚙ ⏸'} onPress={basculer} />
+        <Button key="masquer" plain label="×" onPress={masquer} />
       </Box>
     )
   })
